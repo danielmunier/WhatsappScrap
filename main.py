@@ -6,6 +6,7 @@ import json
 import time
 import re
 import logging
+
 SHEETDB_URL = ''
 SHEETDB_TOKEN = ''  
 
@@ -13,10 +14,7 @@ SHEETDB_TOKEN = ''
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Inicia o navegador
-options = Options()
-options.add_argument("user-data-dir=C/Users/User/AppData/Local/Google/Chrome/User Data")
-browser = webdriver.Chrome(options=options)
-
+browser = webdriver.Chrome()
 
 def start_whatsapp_web():
     # Acessa o WhatsApp Web
@@ -24,8 +22,8 @@ def start_whatsapp_web():
     # Espera o usuário escanear o QR code se necessário 
     input('Pressione "Enter" após escanear o QR code e o WhatsApp Web estar carregado completamente')
 
+
 def send_data_to_sheetdb(data):
-  
     headers = {
         'Content-Type': 'application/json',
         'Authorization': f'Bearer {SHEETDB_TOKEN}'
@@ -33,9 +31,16 @@ def send_data_to_sheetdb(data):
     response = requests.post(SHEETDB_URL, data=json.dumps(data), headers=headers)
     logging.info(response.json())
 
+
 def contains_trigger(message):
     score_regex = re.compile(r'consulta(r)?[\s_-]?score', re.IGNORECASE)
-    return score_regex.search(message) is not None
+    documentation_regex = re.compile(r'documenta(c|ç)(a|ã)o', re.IGNORECASE)
+    link_request_regex = re.compile(r'pedido[\s_-]?de[\s_-]?link', re.IGNORECASE)
+    return (
+        score_regex.search(message) is not None or 
+        documentation_regex.search(message) is not None or 
+        link_request_regex.search(message) is not None
+    )
 
 def to_title_case(name):
     return ' '.join(word.capitalize() for word in name.split())
@@ -47,23 +52,25 @@ def format_cpf(cpf):
 
 def extract_data(message):
     lines = message.split('\n')
-    data = {"Já é cliente": "", "Feedback": ""}
+    data = {"Nome": "", "Nascimento": "", "CPF": "", "Cidade": "", "Consultora": "", "Bairro": ""}  
+    
     for line in lines:
         line = line.strip()
-        if line.startswith('NOME:'):
-            data['Nome'] = to_title_case(line.replace('NOME:', '').strip())
-        elif line.startswith('CPF:'):
-            data['CPF'] = format_cpf(line.replace('CPF:', '').strip())
-        elif line.startswith('NASCIMENTO:'):
-            data['Nascimento'] = line.replace('NASCIMENTO:', '').strip()
-        elif line.startswith('CIDADE:'):
-            data['Bairro'] = to_title_case(line.replace('CIDADE:', '').strip())
-        elif line.startswith('CONSULTORA:') or line.startswith('CONSULTOR:'):
-            data['Consultor'] = line.replace('CONSULTORA:', '').replace('CONSULTOR:', '').strip()
-        elif line.startswith('JÁ É CLIENTE:'):
-            data['Já é cliente'] = line.replace('JÁ É CLIENTE:', '').strip()
-        elif line.startswith('FEEDBACK:'):
-            data['Feedback'] = line.replace('FEEDBACK:', '').strip()
+        if re.match(r'^nome:', line, re.IGNORECASE):
+            data['Nome'] = line.split(':', 1)[1].strip()
+        elif re.match(r'^cpf:', line, re.IGNORECASE):
+            data['CPF'] = format_cpf(line.replace('cpf:', '').strip())
+        elif re.match(r'^nascimento:', line, re.IGNORECASE):
+            data['Nascimento'] = line.split(':', 1)[1].strip()  # Captura o valor após os dois pontos
+        elif re.match(r'^(endereço|bairro|cidade):', line, re.IGNORECASE):
+            if 'Cidade' not in data:
+                data['Cidade'] = ""
+            data['Bairro'] += " " + to_title_case(line.split(':', 1)[1].strip())
+            data['Cidade'] += " " + to_title_case(line.split(':', 1)[1].strip())
+        elif re.match(r'^(consultora|consultor):', line, re.IGNORECASE):
+            data['Consultor'] = line.split(':', 1)[1].strip()
+            data['Consultora'] = line.split(':', 1)[1].strip()
+    
     return data
 
 
@@ -90,14 +97,11 @@ def monitor_conversation():
                         data = extract_data(msg)
                         logging.info(f"Dados extraídos: {data}")
                         send_data_to_sheetdb(data)
-                     
                 last_messages = current_messages
             time.sleep(2)
         except Exception as e:
             logging.error(f"Erro: {e}")
             break
-
-
 
 try:
     start_whatsapp_web()
